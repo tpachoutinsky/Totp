@@ -1,26 +1,28 @@
 package com.astier.bts.client_tcp_prof;
 
 import com.astier.bts.client_tcp_prof.aes.Aes_cbc;
-import com.astier.bts.client_tcp_prof.aes.Outils;
-import com.astier.bts.client_tcp_prof.tcp.TCP;
+import com.astier.bts.client_tcp_prof.aes.Connexion;
+import Outils.Outils;
 import com.astier.bts.client_tcp_prof.tcp.TCPBin;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Button;
+import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextArea;
 import javafx.scene.shape.Circle;
+import modeles.Ipv4;
 
-import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetAddress;
-import java.net.Socket;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ResourceBundle;
 import static javafx.scene.paint.Color.*;
 
 public class HelloController implements Initializable {
+
+
     public Button button;
     public Button connecter;
     public Button deconnecter;
@@ -31,18 +33,28 @@ public class HelloController implements Initializable {
     public TextArea TextAreaReponses;
     static public TCPBin tcp;
     static boolean enRun = false;
-    String adresse,port;
+    public ChoiceBox choicebox;
     public Aes_cbc aes;
-
 
     @Override
     public void initialize(URL location, ResourceBundle resources) {
 
         voyant.setFill(RED);
+
         try {
             chargerConfigAES();
         } catch (Exception e) {
             TextAreaReponses.appendText("Erreur config AES : " + e.getMessage() + "\n");
+        }
+
+
+        try {
+            ArrayList<Ipv4> interfaces = ScanInterfaces.getSystemIP();
+            interfaces.forEach(ip -> {
+                choicebox.getItems().add(ip.nominterfacename() + " (" + ip.ip() + ")");
+            });
+        } catch (Exception e) {
+            TextAreaReponses.appendText("Erreur scan interfaces : " + e.getMessage() + "\n");
         }
 
         connecter.setOnAction(event -> {
@@ -52,13 +64,15 @@ public class HelloController implements Initializable {
                 throw new RuntimeException(e);
             }
         });
+
         deconnecter.setOnAction(event -> {
-           try{
-               deconnecter();
-           }catch (Exception e){
-               throw new RuntimeException(e);
-           }
+            try{
+                deconnecter();
+            }catch (Exception e){
+                throw new RuntimeException(e);
+            }
         });
+
         button.setOnAction(event -> {
             try{
                 envoyer();
@@ -66,23 +80,19 @@ public class HelloController implements Initializable {
                 throw new RuntimeException(e);
             }
         });
-
-
     }
 
     private void chargerConfigAES() {
         try {
-            // Lecture du fichier JSON dans /resources
-            InputStream is = getClass().getResourceAsStream("/configuration_json.json");
+            InputStream is = HelloController.class.getResourceAsStream("/configuration_json.json");
 
             if (is == null) {
-                TextAreaReponses.appendText("Erreur : fichier JSON introuvable dans /resources\n");
+                TextAreaReponses.appendText("Erreur : configuration_json.json introuvable dans /resources\n");
                 return;
             }
 
             String json = new String(is.readAllBytes());
 
-            // Extraction manuelle des champs
             String keyStr = json.split("\"motDePasse\"")[1]
                     .split(":")[1]
                     .replace("\"", "")
@@ -95,24 +105,21 @@ public class HelloController implements Initializable {
                     .replace("}", "")
                     .trim();
 
-            // Normalisation en 16 octets via ta classe Outils
+            if (keyStr.isEmpty() || ivStr.isEmpty()) {
+                TextAreaReponses.appendText("Erreur : motDePasse ou iv manquant dans le JSON\n");
+                return;
+            }
+
             byte[] key = Outils.normalizeChaine(keyStr, 16);
             byte[] iv  = Outils.normalizeChaine(ivStr, 16);
 
-            // Initialisation AES
-            aes = new Aes_cbc(key, iv);
 
-            TextAreaReponses.appendText("AES chargé depuis /resources\n");
+            aes = new Aes_cbc(key, iv);
 
         } catch (Exception e) {
             TextAreaReponses.appendText("Erreur config AES : " + e.getMessage() + "\n");
         }
     }
-
-
-
-
-
 
     private void envoyer() {
         String requette = TextFieldRequette.getText();
@@ -151,22 +158,42 @@ public class HelloController implements Initializable {
         }
     }
 
-    private void connecter() throws UnknownHostException, InterruptedException {
-        adresse = TextFieldIP.getText();
-        port = TextFieldPort.getText();
-        if (adresse.isEmpty()||port.isEmpty()){
-            TextAreaReponses.appendText("Erreur : veuillez entrer un adresse et un port\n");
-            return;
+    private void connecter() {
+        try {
+            String interfaceChoisie = (String) choicebox.getValue();
+
+            if (interfaceChoisie == null) {
+                TextAreaReponses.appendText("Choisissez une interface réseau\n");
+                return;
+            }
+
+            Multicast mc = new Multicast(interfaceChoisie);
+            List<Connexion> serveurs = mc.discoverAll();
+
+            if (serveurs.isEmpty()) {
+                TextAreaReponses.appendText("Aucun serveur trouvé\n");
+                return;
+            }
+
+            // On prend le premier serveur trouvé
+            Connexion connexion = serveurs.get(0);
+
+            TextAreaReponses.appendText("Serveur trouvé : "
+                    + connexion.addressAsString() + ":" + connexion.portTCP() + "\n");
+
+            tcp = new TCPBin(connexion.adresseServer(), connexion.portTCP(), this);
+            tcp.connection();
+            tcp.start();
+
+            enRun = true;
+            voyant.setFill(GREEN);
+
+        } catch (Exception e) {
+            TextAreaReponses.appendText("Erreur connexion : " + e.getMessage() + "\n");
         }
-        int portInt = Integer.parseInt(port);
-        InetAddress serveur = InetAddress.getByName(adresse);
-        tcp = new TCPBin(serveur, portInt, this);
-
-        tcp.connection();
-        tcp.start();
-        enRun=true;
-        voyant.setFill(GREEN);
-
     }
+
+
+
 
 }

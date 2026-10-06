@@ -20,9 +20,6 @@ public class TCPBin extends Thread {
     HelloController fxmlCont;
 
 
-
-    public TCPBin() {}
-
     public TCPBin(InetAddress serveur, int port, HelloController fxmlCont) {
         this.port = port;
         this.serveur = serveur;
